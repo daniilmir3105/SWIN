@@ -1,5 +1,5 @@
 # Игнорирование папок
-.pynb_checkpoints/
+.ipynb_checkpointspynb_checkpoints/
 data/
 .idea/
 model/
