@@ -1,0 +1,20 @@
+# Игнорирование папок
+.pynb_checkpoints/
+data/
+.idea/
+model/
+patches/
+test_data/
+train_data/
+trained_model/
+
+# Игнорирование файлов по расширению
+*.log
+*.tmp
+*.bak
+
+# Игнорирование конкретного файла
+secret.txt
+
+# Игнорирование всех файлов с определённым расширением в конкретной папке
+logs/*.log
