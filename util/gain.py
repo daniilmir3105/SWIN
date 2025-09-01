@@ -67,3 +67,4 @@ def gain(data, dt, option1, parameters, option2):
             dout[:, k] = dout[:, k]/amax
 
     return dout
+
