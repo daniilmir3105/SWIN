@@ -1,112 +1,97 @@
-# -*- coding: utf-8 -*
+# -*- coding: utf-8 -*-
+import os
+# 1) Включаем синхронный режим ошибок CUDA для точной отладки
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 import argparse
-from torch.autograd import Variable
-from torchvision import transforms
-from util.Datasets2 import MyDatasets
 import time
+from torch.autograd import Variable
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn as nn
-from model.SCRN import SCRN
-from torch.utils.data import DataLoader
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
+from torch.utils.data import DataLoader
+from torchvision import transforms
+from tqdm import tqdm  # прогресс-бар
+import torch.cuda.amp as amp  # для смешанной точности
+
+from model.SCRN import SCRN
+from util.Datasets2 import MyDataset
 from util.My_tool1 import save_csv, produce_csv
 
-# Add parameters
+# 2) Аргументы
 parser = argparse.ArgumentParser(description='PyTorch SCRN')
-parser.add_argument('--model', default='SCRN', type=str, help='choose a type of model')
-parser.add_argument('--train_data_dir', default=r'/workspace/Paper2/TrainData11', type=str,
-                    help='path of train original-test_data')
-parser.add_argument('--epoch', default=80, type=int, help='number of train epoches')
-parser.add_argument('--lr', default=1e-3, type=float, help='initial learning rate for Adam')
-parser.add_argument('--batch_size', default=32, type=int, help='batch size')
-parser.add_argument('--patch_size', default=(128, 128), type=int, help='patch size')
+parser.add_argument('--train_data_dir', default='./patches', type=str, help='path to .npy patches')
+parser.add_argument('--epoch',          default=4,       type=int,   help='number of epochs')
+parser.add_argument('--lr',             default=1e-3,     type=float, help='learning rate')
+parser.add_argument('--batch_size',     default=32,       type=int,   help='batch size')
+parser.add_argument('--num_workers',    default=4,        type=int,   help='DataLoader workers')
 args = parser.parse_args()
 
-
 if __name__ == '__main__':
+    # 3) Подготовка
+    cudnn.benchmark = True
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    os.makedirs('trained_model', exist_ok=True)
+    produce_csv('SCRN_loss.csv')
 
-    # parameter
-    Input_root_dir = args.train_data_dir
-    patch_size = args.patch_size
-    batch_size = args.batch_size
-
-    # model
-    print('====> Building  SCRN model')
-    model = SCRN()
-
-    # cuda
-    cuda = torch.cuda.is_available()
-    device = torch.device('cuda')
+    # 4) Модель, оптимизатор и AMP
+    print('====> Building SCRN model')
+    model = SCRN().to(device)
     criterion = nn.MSELoss(reduction='sum').to(device)
-    if cuda:
-        model = model.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = MultiStepLR(optimizer, milestones=[20, 40, 60], gamma=0.2)
+    scaler = amp.GradScaler()  # масштабировщик для mixed precision
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    # Dynamically adjust learning rate
-    # torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones, gamma=0.1, last_epoch=-1)
-    # milestones is an array, such as [50,70]. gamma is a multiple. If the learning rate starts at 0.01, it becomes 0.001 when epoch is 50, and becomes 0.0001 when epoch is 70.
-    scheduler = MultiStepLR(optimizer, milestones=[20, 40, 60], gamma=0.2)  # learning rates
+    # 5) Даталоадер
+    transform = transforms.ToTensor()
+    dataset = MyDataset(root_dir=args.train_data_dir, transform=transform)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True
+    )
 
-    # dataloader
-    data_trans = transforms.Compose([transforms.ToTensor()])
-    data = MyDatasets(Input_root_dir=Input_root_dir, Target_root_dir=Input_root_dir, transform=data_trans)
-    dataloader = torch.utils.data.DataLoader(data, batch_size=batch_size, shuffle=True)
-
+    # 6) Тренировочный цикл с tqdm и AMP
     step = 0
-    train_n = args.epoch
-    time_open = time.time()
-    produce_csv('SCRN_loss.cvs')
-    for epoch in range(train_n):
+    for epoch in range(1, args.epoch + 1):
         model.train()
         running_loss = 0.0
         start_time = time.time()
-        for (Input, Target) in dataloader:
-            # Put the data on the GPU for training
-            X, Y = Variable(Input).to(device), Variable(Target).to(device)
-            X = X.type(torch.float32)
-            Y = Y.type(torch.float32)
 
-            y_pred = model(X)
+        loop = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epoch}", unit="batch")
+        for X, Y in loop:
+            # переносим данные и гарантируем contiguous / non_blocking
+            X = X.to(device, dtype=torch.float32, non_blocking=True).contiguous()
+            Y = Y.to(device, dtype=torch.float32, non_blocking=True).contiguous()
+
             optimizer.zero_grad()
-            loss = criterion(y_pred, Y)
-            loss.backward()
-            optimizer.step()
 
-            # losses
-            running_loss += loss.data.item()
-            epoch_loss = running_loss * batch_size / len(data)
-            step += batch_size
-        elapsed_time = time.time() - start_time
-        print('\repoch:{} Loss:{:.4f} step:{} time:{:.4f} '.format(epoch+1,epoch_loss, step, elapsed_time), end=' ',flush=True)
+            # forward + backward в mixed precision
+            with amp.autocast():
+                pred = model(X)
+                assert pred.shape == Y.shape, f"Shape mismatch: {pred.shape} vs {Y.shape}"
+                loss = criterion(pred, Y)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            running_loss += loss.item()
+            step += X.size(0)
+
+            loop.set_postfix(batch_loss=loss.item())
+
+        # средний loss за эпоху
+        epoch_loss = running_loss / len(dataloader)
+        elapsed = time.time() - start_time
+
+        print(f'\nEpoch {epoch}/{args.epoch}  Avg Loss: {epoch_loss:.4f}  Steps: {step}  Time: {elapsed:.1f}s')
+
         scheduler.step()
-        save_csv("/workspace/Paper2/SCRN/SCRN_loss.cvs", epoch+1, epoch_loss, 0)
-        torch.save(model, '/workspace/Paper2/SCRN/trained_model/model_%03d.pth' % (epoch + 1))
-
-    #     #########################################
-    #     # TODO：Start testing
-    #     model.eval()
-    #
-    #     data_path = r'..\Data\Numpy_DATA\test\theoretical_1NoiseData1.npy'
-    #     original_data_path = r'..\Data\Numpy_DATA\Original\theoreticalData1.npy'
-    #     # Read data
-    #     data_input_z = np.load()
-    #     # print(np.min(data_input_z))
-    #     # Convert data to tensor
-    #     data_input_z_tensor = data_trans(data_input_z)
-    #     data_input_z_tensor = data_input_z_tensor.unsqueeze(0)
-    #     # Put data into GPU
-    #     data_input_z_tensor = (Variable(data_input_z_tensor).to(device)).type(torch.float32)
-    #     data_input_s = np.load()
-    #
-    #     # Model prediction probability
-    #     y_pred = model(data_input_z_tensor)
-    #     # Dimensionality reduction of data
-    #     out = y_pred.squeeze(0)
-    #     # Put data from gpu into cpu and reduce dimensionality again
-    #     imag_narry = ((out.squeeze(0)).cuda().test_data.cpu()).detach().numpy()
-    #
-    #     out_data = imag_narry
-    #
-    #
-    # time_end = time.time() - time_open
+        # save_csv('SCRN_loss.csv', epoch, epoch_loss, 0)
+        torch.save(model, f'trained_model/model_{epoch:02d}.pth')
