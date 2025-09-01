@@ -68,18 +68,3 @@ def Download_data(root, datasets=3):
         else:
             print('%s already exists' % (filename))
     print("download finished")
-
-
-if __name__ == "__main__":
-    # Указываем директорию для сохранения данных
-    root_dir = r"C:\Users\Daniil\PycharmProjects\SwinTransformer\data"  # Измени путь, если нужно сохранить в другом месте
-
-    # Количество наборов данных для загрузки (от 1 до 6)
-    datasets_to_download = 6  # Измени это значение, чтобы скачать больше или меньше данных
-
-    # Создаем директорию, если ее нет
-    if not os.path.exists(root_dir):
-        os.makedirs(root_dir)
-
-    # Запускаем загрузку
-    Download_data(root=root_dir, datasets=datasets_to_download)
