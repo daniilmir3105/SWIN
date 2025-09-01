@@ -279,8 +279,8 @@ def datagenerator(data_dir, patch_size=(128, 128), stride=(32, 32), train_data_n
     '''
 
     if download:  # download=False
-        if datasets > 0:  
-            Download_data(data_dir, datasets=datasets) 
+        if datasets > 0:
+            Download_data(data_dir, datasets=datasets)
         else:
             print("=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>=>")
             print("Please input the num of the dataset to download ")
@@ -294,10 +294,10 @@ def datagenerator(data_dir, patch_size=(128, 128), stride=(32, 32), train_data_n
     for i in range(len(file_list)):
 
         with segyio.open(file_list[i], 'r', ignore_geometry=True) as f:
-            f.mmap()  
+            f.mmap()
             sourceX = f.attributes(segyio.TraceField.SourceX)[:]
-            trace_num = len(sourceX)  
-            shot_num = len(set(sourceX))  
+            trace_num = len(sourceX)
+            shot_num = len(set(sourceX))
 
             if (trace_num == shot_num ):
                 shot_num = 1
@@ -306,25 +306,25 @@ def datagenerator(data_dir, patch_size=(128, 128), stride=(32, 32), train_data_n
                 shot_num = 1
                 len_shot = trace_num
             else :
-                len_shot = trace_num // shot_num  
+                len_shot = trace_num // shot_num
             '''
             The test_data of each shot is read separately
             The default is that the test_data dimensions collected by all shots in the file are the same.
-            Jump=1, which means that the test_data of all shots in the file is read by default. 
+            Jump=1, which means that the test_data of all shots in the file is read by default.
             When jump=2, it means that every other shot reads test_data.
             '''
             q = -1
             for j in range(0, shot_num, jump):
                 data = np.asarray([np.copy(x) for x in f.trace[j * len_shot:(j + 1) * len_shot]]).T
                 q += 1
-                if agc:  
+                if agc:
                     print("agc")
                     data = gain(data, 0.004, 'agc', 0.05, 1)
                 else:
                     data = data / np.max(abs(data))
 
                 # Number of shots used to generate the patch
-                select_shot_num = len(list(range(0, shot_num, jump)))  
+                select_shot_num = len(list(range(0, shot_num, jump)))
                 h, w = data.shape
                 p_h, p_w = patch_size
                 s_h, s_w = stride
@@ -372,17 +372,31 @@ if __name__ == '__main__':
     '''
     root (string): the .segy file exists or will be saved to if download is set to True.
     train patch_size=(128, 128), stride=(48, 48)，aug_times=4, i+1
-    """
+    '''
 
-    root = 'data/train/' #The path to load the dataset.
-    train_data = datagenerator(data_dir=root, patch_size=(128, 128), stride=(48, 48), train_data_num=10,
+    # root = 'data/train/' #The path to load the dataset.
+    root = r'./segy_data/'
+    # train_data = datagenerator(data_dir=root, patch_size=(128, 128), stride=(48, 48), train_data_num=10,
+    train_data = datagenerator(data_dir=root, patch_size=(128, 128), stride=(48, 48), train_data_num=float('inf'),
                                download=False, datasets=0, aug_times=0, scales=[1], verbose=True, jump=1, agc=False)
     train_data = train_data.astype(np.float32)
     print(train_data.shape)
     xs = train_data.transpose((0, 3, 1, 2))
     print(xs.shape)
+
+    # for i in range(len(xs)):
+    #     np.save('TestData11/test_data_%d' % (i + 1), xs[i][0]) #The path to save.
+
+    # Убедимся, что папка patches существует
+    import os
+    save_dir = './patches'
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Сохраняем каждый патч в папку patches
     for i in range(len(xs)):
-        np.save('TestData11/test_data_%d' % (i + 1), xs[i][0]) #The path to save.
+        out_path = os.path.join(save_dir, f'patch_{i+1}.npy')
+        np.save(out_path, xs[i][0])
+    print(f"Saved {len(xs)} patches into {save_dir}")
 
     # root = 'test_data/real_noise/'
     # real_noise_data = datagenerator(data_dir=root, patch_size=(128, 128), stride=(1, 1), train_data_num=2000,
@@ -391,6 +405,8 @@ if __name__ == '__main__':
     # xs = real_noise_data.transpose((0, 3, 1, 2))
     # for i in range(len(xs)):
     #     np.save('../Real_noise/real_noise_data_%d' % (i+1), xs[i][0])
+
+
 
 
 
