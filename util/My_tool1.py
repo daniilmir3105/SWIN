@@ -20,10 +20,18 @@ def snr_(arr1: np.ndarray, arr2: np.ndarray) -> float:
     return snr
 
 
-def ssim_(imageA, imageB):
-    grayScore = compare_ssim(imageA, imageB, win_size=15)
-    return grayScore
+# def ssim_(imageA, imageB):
+#     grayScore = compare_ssim(imageA, imageB, win_size=15)
+#     return grayScore
 
+from skimage.metrics import structural_similarity as compare_ssim
+
+def ssim_(imageA, imageB, data_range=None):
+    if data_range is None:
+        data_range = np.max(imageB) - np.min(imageB)
+    grayScore = compare_ssim(imageA, imageB, win_size=15, data_range=data_range)
+    return grayScore
+    
 
 def log(*args, **kwargs):
     # 例：2022-02-18 14:34:23 + 内容
